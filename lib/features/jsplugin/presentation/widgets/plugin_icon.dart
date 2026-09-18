@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import 'plugin_icon_utils.dart';
+
 class PluginIcon extends StatelessWidget {
   final String? iconUrl;
   final String displayName;
@@ -19,7 +21,7 @@ class PluginIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     if (iconUrl != null && iconUrl!.isNotEmpty) {
       final url = iconUrl!;
-      final isSvg = url.toLowerCase().endsWith('.svg');
+      final isSvg = isSvgIconUrl(url);
       return ClipRRect(
         borderRadius: BorderRadius.circular(size / 5),
         child:
@@ -82,7 +84,7 @@ class PluginNavIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     if (iconUrl == null || iconUrl!.isEmpty) return fallbackIcon;
     final url = iconUrl!;
-    final isSvg = url.toLowerCase().endsWith('.svg');
+    final isSvg = isSvgIconUrl(url);
     return SizedBox(
       width: size,
       height: size,

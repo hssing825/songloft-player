@@ -14,6 +14,7 @@ import '../../../settings/data/settings_api.dart';
 import '../../../settings/presentation/providers/settings_provider.dart';
 import '../../data/jsplugin_api.dart';
 import '../providers/jsplugin_provider.dart';
+import 'plugin_icon_utils.dart';
 
 /// 官方插件源 URL
 const _kOfficialRegistryUrl =
@@ -767,7 +768,10 @@ class _RegistryPluginItemState extends ConsumerState<_RegistryPluginItem> {
   Widget _buildIcon(RegistryPluginEntry entry, ThemeData theme) {
     if (entry.icon != null && entry.icon!.isNotEmpty) {
       final rawIcon = entry.icon!;
-      final isSvg = rawIcon.toLowerCase().endsWith('.svg');
+      // 商店条目的 icon 来自后端返回的 `/api/v1/proxy?url=<encoded>`：
+      // `endsWith('.svg')` 会误判为位图并交给 `Image.network` 解码 SVG，
+      // errorBuilder 兜底成首字母。用 `isSvgIconUrl` 解析 query 里的目标 URL。
+      final isSvg = isSvgIconUrl(rawIcon);
       final url = UrlHelper.buildResourceUrl(rawIcon);
       return ClipRRect(
         borderRadius: BorderRadius.circular(8),
