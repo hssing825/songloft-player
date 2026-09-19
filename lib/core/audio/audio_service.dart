@@ -745,17 +745,27 @@ class SongloftAudioHandler extends BaseAudioHandler with SeekHandler {
               : PlaybackSource.remoteStream;
 
       // Web 平台 / 电台直播流使用 AudioSource.uri（直播流无法缓存）。
-      // Windows 也走 AudioSource.uri：LockCachingAudioSource 会把远端音频缓存到
-      // %TEMP%\just_audio_cache 再 renameSync，而 Windows 下打开的文件句柄会阻止
-      // rename（POSIX 不会），重播/重试同一 URL 时抛 errno 32「另一个程序正在使用此文件」
-      // 导致播放失败并陷入无限重试（songloft-org/songloft#271）。desktop 由 libmpv
-      // 直接支持网络流 seek，且后端 cache_service 已提供透明缓存，客户端缓存纯属冗余。
-      // 其他平台（Android/iOS/Linux/macOS）普通歌曲仍用 LockCachingAudioSource 边播边缓存。
-      final isWindows =
-          !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+      // Windows / iOS 也走 AudioSource.uri：
+      // - Windows：LockCachingAudioSource 会把远端音频缓存到 %TEMP%\just_audio_cache
+      //   再 renameSync，而 Windows 下打开的文件句柄会阻止 rename（POSIX 不会），
+      //   重播/重试同一 URL 时抛 errno 32「另一个程序正在使用此文件」导致播放失败
+      //   并陷入无限重试（songloft-org/songloft#271）。
+      // - iOS：LockCachingAudioSource 会起本地明文 http 代理再把原 URL 交给底层
+      //   player。iOS 上原生已统一 media_kit(libmpv)，libmpv 直接支持网络流 seek，
+      //   经这层代理反而导致非缓存网络歌曲直接播放失败（songloft-org/songloft#470，
+      //   现象：曲库能显示、点播报「播放失败，正在尝试下一首」，先手动缓存到本机
+      //   后可放；缓存路径走 file:// 源绕过该代理故正常）。
+      // desktop 由 libmpv 直接支持网络流 seek，且后端 cache_service 已提供透明缓存，
+      // 客户端缓存纯属冗余。其他平台（Android/Linux/macOS）普通歌曲仍用
+      // LockCachingAudioSource 边播边缓存。
+      final isDirectStreamPlatform =
+          !kIsWeb &&
+          (defaultTargetPlatform == TargetPlatform.windows ||
+              defaultTargetPlatform == TargetPlatform.iOS);
       // 视频文件通常较大，同样走 AudioSource.uri：libmpv/原生后端直接支持网络流 seek，
       // 后端已有透明缓存；避免 LockCachingAudioSource 代理大文件 seek 的性能/句柄问题。
-      final useLiveSource = kIsWeb || song.isLive || isWindows || song.isVideo;
+      final useLiveSource =
+          kIsWeb || song.isLive || isDirectStreamPlatform || song.isVideo;
       if (cachedPath != null) {
         debugPrint(
           '[Player] SongloftAudioHandler: play from local cache: $cachedPath',

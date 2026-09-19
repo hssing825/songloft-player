@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui' show Rect;
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
@@ -35,8 +36,16 @@ class LogExportService {
   LogExportService(this._api);
 
   /// 打包并分享日志。[shareSubject] 用于部分平台的分享标题。
+  /// [sharePositionOrigin] 为分享面板的锚点矩形（全局坐标）。iOS 上
+  /// UIActivityViewController 的 popoverPresentationController 会强制校验
+  /// sourceRect 非零且在 source view 坐标空间内，未传入时 share_plus 直接抛
+  /// PlatformException(sharePositionOrigin: argument must be set,
+  /// songloft-org/songloft#470)。Android/桌面/Web 会忽略此参数。
   /// 返回实际包含的内容描述；两侧都为空时抛 [StateError]。
-  Future<LogExportResult> exportAndShare({String? shareSubject}) async {
+  Future<LogExportResult> exportAndShare({
+    String? shareSubject,
+    Rect? sharePositionOrigin,
+  }) async {
     final archive = Archive();
     var hasBackend = false;
     var hasFrontend = false;
@@ -97,7 +106,11 @@ class LogExportService {
     final fileName = 'songloft-logs-$dateStr.zip';
 
     final xfile = await buildLogShareFile(zipBytes, fileName);
-    await Share.shareXFiles([xfile], subject: shareSubject);
+    await Share.shareXFiles(
+      [xfile],
+      subject: shareSubject,
+      sharePositionOrigin: sharePositionOrigin,
+    );
 
     return LogExportResult(hasBackend: hasBackend, hasFrontend: hasFrontend);
   }

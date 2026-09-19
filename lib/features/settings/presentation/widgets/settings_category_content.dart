@@ -1824,12 +1824,29 @@ class _SettingsCategoryContentState
       enabled: !_exportingLogs,
       onTap: () async {
         if (_exportingLogs) return;
+        // iOS 上 UIActivityViewController 通过 popover 展示时会强制校验
+        // sourceRect，不传会直接 PlatformException（songloft-org/songloft#470）。
+        // 以当前 ListTile 的全局矩形作锚点；拿不到时退化为屏幕中心 1x1 rect，
+        // 保证参数非零且落在 source view 坐标空间内。Android/桌面/Web 会忽略。
+        final box = context.findRenderObject() as RenderBox?;
+        Rect? origin;
+        if (box != null && box.hasSize) {
+          origin = box.localToGlobal(Offset.zero) & box.size;
+        } else {
+          final size = MediaQuery.of(context).size;
+          origin = Rect.fromCenter(
+            center: Offset(size.width / 2, size.height / 2),
+            width: 1,
+            height: 1,
+          );
+        }
         setState(() => _exportingLogs = true);
         try {
           final result = await ref
               .read(logExportServiceProvider)
               .exportAndShare(
                 shareSubject: l10n.settingsExportLogsShareSubject,
+                sharePositionOrigin: origin,
               );
           if (!mounted) return;
           ResponsiveSnackBar.show(
