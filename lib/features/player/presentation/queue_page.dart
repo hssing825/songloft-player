@@ -8,6 +8,7 @@ import '../../../core/utils/web_image_tuning.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../shared/models/song.dart';
 import '../../../shared/utils/responsive_snackbar.dart';
+import '../../../shared/widgets/draggable_scrollbar_overlay.dart';
 import '../domain/player_state.dart';
 import 'providers/player_provider.dart';
 import 'widgets/queue_auto_scroll.dart';
@@ -232,7 +233,7 @@ class _QueueBottomSheetState extends ConsumerState<QueueBottomSheet>
     PlayerNotifier notifier,
     ScrollController scrollController,
   ) {
-    return ReorderableListView.builder(
+    final list = ReorderableListView.builder(
       scrollController: scrollController,
       // Web 端收紧离屏预解码范围，降低队列封面 GPU 纹理累积（原生端为 null 保持默认）。
       scrollCacheExtent: webListCacheExtent,
@@ -262,6 +263,18 @@ class _QueueBottomSheetState extends ConsumerState<QueueBottomSheet>
           onRemove: () => _removeSong(context, notifier, index, song),
         );
       },
+    );
+
+    // 队列可达数百首，默认滚动条命中区极窄，快速跳位不便。
+    // 复用歌单详情页的 DraggableScrollbarOverlay：拇指、点按轨道、拖拽时显示"N / 总数"。
+    // >20 首才启用，短队列没必要占位。
+    return DraggableScrollbarOverlay(
+      scrollController: scrollController,
+      totalItemCount: state.playlist.length,
+      estimatedItemHeight: queueItemExtent,
+      enabled: state.playlist.length > 20,
+      labelBuilder: (index, total) => '$index / $total',
+      child: list,
     );
   }
 
