@@ -59,9 +59,7 @@ pubspec.lock
 /scripts/webf-verify/out/
 
 # Xcode / Swift Package Manager 本地状态
-# xcshareddata/swiftpm/ 未追踪但 Xcode 会自动创建；Podfile.lock 等
-# 由本地 Flutter/CocoaPods 版本触发的重写差异不入库。
+# xcshareddata/swiftpm/ 未追踪但 Xcode 会自动创建。
+# pbxproj / Podfile.lock / xcscheme 是工程定义与可复现构建的必需文件，
+# 必须入库（删掉曾导致 CI 无法构建 iOS，见 73d60a6）。
 **/xcshareddata/swiftpm/
-ios/Podfile.lock
-ios/Runner.xcodeproj/project.pbxproj
-ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
