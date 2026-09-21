@@ -83,14 +83,21 @@ final lyricStateProvider = NotifierProvider<LyricNotifier, LyricState>(
 
 class LyricNotifier extends Notifier<LyricState> {
   String? _lastLoadedUrl;
+  String? _lastLoadedUpdatedAt;
   int _loadGeneration = 0;
   CancelToken? _cancelToken;
 
   @override
   LyricState build() {
-    final lyricUrl = ref.watch(
-      playerStateProvider.select((s) => s.currentSong?.lyricUrl),
+    // 同时监听 lyricUrl 与 song.updatedAt：服务端更新内嵌歌词后 updatedAt 会变化，
+    // 此时即使 URL 不变也应重新加载并旁路歌词缓存（songloft-org/songloft#477）。
+    final key = ref.watch(
+      playerStateProvider.select(
+        (s) => (s.currentSong?.lyricUrl, s.currentSong?.updatedAt),
+      ),
     );
+    final lyricUrl = key.$1;
+    final songUpdatedAt = key.$2?.toIso8601String();
 
     ref.listen(playerStateProvider.select((s) => s.currentTime), (prev, next) {
       _updateCurrentLine(next);
@@ -108,11 +115,12 @@ class LyricNotifier extends Notifier<LyricState> {
 
     if (lyricUrl != null && lyricUrl.isNotEmpty) {
       _cancelToken?.cancel('song changed');
-      Future.microtask(() => _loadLyrics(lyricUrl));
+      Future.microtask(() => _loadLyrics(lyricUrl, songUpdatedAt));
       return const LyricState(isLoading: true);
     }
 
     _lastLoadedUrl = null;
+    _lastLoadedUpdatedAt = null;
     _cancelToken?.cancel('song changed');
     _loadGeneration++;
     Future.microtask(() => ref.read(audioHandlerProvider).restoreNowPlaying());
@@ -138,16 +146,23 @@ class LyricNotifier extends Notifier<LyricState> {
   }
 
   Future<void> _loadLyrics(
-    String? lyricUrl, {
+    String? lyricUrl,
+    String? songUpdatedAt, {
     bool forceRefresh = false,
   }) async {
     if (lyricUrl == null || lyricUrl.isEmpty) {
       _lastLoadedUrl = null;
+      _lastLoadedUpdatedAt = null;
       state = const LyricState();
       return;
     }
 
-    if (!forceRefresh && _lastLoadedUrl == lyricUrl && state.hasLyrics) return;
+    if (!forceRefresh &&
+        _lastLoadedUrl == lyricUrl &&
+        _lastLoadedUpdatedAt == songUpdatedAt &&
+        state.hasLyrics) {
+      return;
+    }
 
     final generation = ++_loadGeneration;
     _cancelToken?.cancel('new load');
@@ -163,9 +178,13 @@ class LyricNotifier extends Notifier<LyricState> {
 
     // 强制刷新时跳过本地缓存，直连后端重抓（后端会重跑歌词搜索插件）
     if (!forceRefresh) {
-      final cached = await LyricCacheService().get(lyricUrl);
+      final cached = await LyricCacheService().get(
+        lyricUrl,
+        songUpdatedAt: songUpdatedAt,
+      );
       if (generation != _loadGeneration) return;
       if (cached != null) {
+        _lastLoadedUpdatedAt = songUpdatedAt;
         _applyPayload(lyricUrl, _decodeCached(cached));
         return;
       }
@@ -205,8 +224,10 @@ class LyricNotifier extends Notifier<LyricState> {
             'tlyric': _stringField(body, 'tlyric'),
             'rlyric': _stringField(body, 'rlyric'),
           }),
+          songUpdatedAt: songUpdatedAt,
         );
       }
+      _lastLoadedUpdatedAt = songUpdatedAt;
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) return;
       debugPrint('[LyricProvider] Failed to load lyric: $e');
@@ -305,8 +326,9 @@ class LyricNotifier extends Notifier<LyricState> {
   /// 强制重新加载歌词（歌词调整后调用）
   void invalidate() {
     _lastLoadedUrl = null;
-    final lyricUrl = ref.read(playerStateProvider).currentSong?.lyricUrl;
-    _loadLyrics(lyricUrl);
+    _lastLoadedUpdatedAt = null;
+    final song = ref.read(playerStateProvider).currentSong;
+    _loadLyrics(song?.lyricUrl, song?.updatedAt.toIso8601String());
   }
 
   /// 用户手动触发的强制重新抓取当前歌曲歌词。
@@ -324,7 +346,12 @@ class LyricNotifier extends Notifier<LyricState> {
     if (lyricUrl == null || lyricUrl.isEmpty) return;
     await LyricCacheService().remove(lyricUrl);
     _lastLoadedUrl = null;
-    await _loadLyrics(lyricUrl, forceRefresh: true);
+    _lastLoadedUpdatedAt = null;
+    await _loadLyrics(
+      lyricUrl,
+      song.updatedAt.toIso8601String(),
+      forceRefresh: true,
+    );
   }
 }
 

@@ -4,6 +4,15 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+/// 缓存文件的信封结构（新格式）。
+///
+/// 旧格式为裸文本 payload，读取时被判定为旧格式并按 miss 处理。
+class _LyricEnvelope {
+  final String? songUpdatedAt;
+  final String payload;
+  const _LyricEnvelope({required this.payload, this.songUpdatedAt});
+}
+
 /// 歌词本地缓存服务
 ///
 /// 将网络加载的歌词文本缓存到本地文件系统，避免重复请求。
@@ -63,37 +72,65 @@ class LyricCacheService {
     return File('${_cacheDir!.path}/$hash.lrc');
   }
 
-  /// 获取缓存的歌词（先查内存，再查文件）
-  Future<String?> get(String url) async {
+  /// 获取缓存的歌词（先查内存，再查文件）。
+  ///
+  /// 传入 [songUpdatedAt]（推荐使用 song.updatedAt.toIso8601String()）后，
+  /// 若缓存中的 songUpdatedAt 与之不一致 → 视为 miss 并清掉旧文件，
+  /// 让下一次调用 [put] 写入带新时间戳的最新歌词。
+  /// 不传 [songUpdatedAt]（例如清缓存前的探测）时退化为按 URL 直查旧行为。
+  Future<String?> get(String url, {String? songUpdatedAt}) async {
+    String? raw;
+
     // 1. 查内存缓存
     final memCached = _memoryCache[url];
-    if (memCached != null) return memCached;
-
-    // 2. Web 平台无文件缓存
-    if (kIsWeb) return null;
-
-    // 3. 查文件缓存
-    await _ensureInitialized();
-    final file = _getCacheFile(url);
-    if (file == null) return null;
-
-    try {
-      if (await file.exists()) {
-        final content = await file.readAsString();
-        // 写入内存缓存
-        _memoryCache[url] = content;
-        return content;
+    if (memCached != null) {
+      raw = memCached;
+    } else if (!kIsWeb) {
+      // 2. 查文件缓存
+      await _ensureInitialized();
+      final file = _getCacheFile(url);
+      if (file != null) {
+        try {
+          if (await file.exists()) {
+            raw = await file.readAsString();
+            _memoryCache[url] = raw;
+          }
+        } catch (e) {
+          debugPrint('[LyricCacheService] 读取缓存文件失败: $e');
+        }
       }
-    } catch (e) {
-      debugPrint('[LyricCacheService] 读取缓存文件失败: $e');
     }
-    return null;
+
+    if (raw == null) return null;
+
+    final decoded = _decodeEnvelope(raw);
+    if (songUpdatedAt != null) {
+      if (decoded == null || decoded.songUpdatedAt != songUpdatedAt) {
+        // 缺 songUpdatedAt（旧格式）或时间戳变化 → 视为失效，顺手清掉
+        await remove(url);
+        return null;
+      }
+      return decoded.payload;
+    }
+    // 未指定 songUpdatedAt 时兼容返回：新格式取 payload，旧格式原样返回
+    return decoded?.payload ?? raw;
   }
 
-  /// 缓存歌词（同时写入内存和文件）
-  Future<void> put(String url, String lyricText) async {
+  /// 缓存歌词（同时写入内存和文件）。
+  ///
+  /// 传入 [songUpdatedAt] 后，写入时以 JSON 信封包裹 `{songUpdatedAt, payload}`，
+  /// 供后续 [get] 判断是否失效。
+  Future<void> put(String url, String lyricText, {String? songUpdatedAt}) async {
+    final stored =
+        songUpdatedAt == null
+            ? lyricText
+            : jsonEncode({
+              'songUpdatedAt': songUpdatedAt,
+              'payload': lyricText,
+            });
+
     // 写入内存缓存
-    _memoryCache[url] = lyricText;
+    _memoryCache[url] = stored;
 
     // Web 平台不写文件
     if (kIsWeb) return;
@@ -104,7 +141,7 @@ class LyricCacheService {
     if (file == null) return;
 
     try {
-      await file.writeAsString(lyricText);
+      await file.writeAsString(stored);
     } catch (e) {
       debugPrint('[LyricCacheService] 写入缓存文件失败: $e');
     }
@@ -143,6 +180,25 @@ class LyricCacheService {
       }
     } catch (e) {
       debugPrint('[LyricCacheService] 清理缓存失败: $e');
+    }
+  }
+
+  /// 解析新格式信封；非 JSON 或字段不符时返回 null（视为旧格式）。
+  _LyricEnvelope? _decodeEnvelope(String raw) {
+    final trimmed = raw.trimLeft();
+    if (!trimmed.startsWith('{')) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final payload = decoded['payload'];
+      if (payload is! String) return null;
+      final ts = decoded['songUpdatedAt'];
+      return _LyricEnvelope(
+        payload: payload,
+        songUpdatedAt: ts is String ? ts : null,
+      );
+    } catch (_) {
+      return null;
     }
   }
 
