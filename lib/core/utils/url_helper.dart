@@ -90,10 +90,14 @@ class UrlHelper {
   /// 追加 `media=video`：后端据此直出原容器（不转码，避免 ffmpeg -vn 丢画面），
   /// 并按容器真实类型返回 Content-Type（如 video/mp4）。
   /// 不追加 format/quality —— 视频需要保留完整音视频轨。
-  static String buildVideoUrl(String url) {
+  static String buildVideoUrl(String url, {bool hlsDirect = false}) {
     final result = buildResourceUrl(url);
     if (result.isEmpty) return '';
-    return appendMediaVideoParam(result);
+    var u = appendMediaVideoParam(result);
+    if (hlsDirect) {
+      u += '${u.contains('?') ? '&' : '?'}hls=direct';
+    }
+    return u;
   }
 
   /// 给已构建的 URL 追加 `media=video` 查询参数。

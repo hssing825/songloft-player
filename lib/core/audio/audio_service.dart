@@ -681,7 +681,17 @@ class SongloftAudioHandler extends BaseAudioHandler with SeekHandler {
               song.format,
               song.filePath,
             )) {
-          songUrl = UrlHelper.buildVideoHlsUrl(song.id);
+          // Web 视频歌曲：浏览器不兼容格式时由 hls.js 接管 <video>。
+          // 本地视频 → 后端 video-hls 转码端点（m3u8）；
+          // 网络视频电台/直播（m3u8 直播流）→ 走电台 HLS 代理（/songs/{id}/play.m3u8，
+          //   需 /settings/hls-proxy 开启，反代改写 m3u8 解决 CORS，与 web 音频电台一致）。
+          //   media=video 对 serveRadio 无效（被忽略），但保留以兼容网络视频歌曲（serveRemote 据此不丢画面）。
+          //   video-hls 端点仅支持本地视频，对直播流会返回 400（songloft-org/songloft#480）。
+          if (song.type == AppConstants.songTypeLocal) {
+            songUrl = UrlHelper.buildVideoHlsUrl(song.id);
+          } else {
+            songUrl = UrlHelper.buildVideoUrl(song.url!);
+          }
         } else if (!kIsWeb &&
             song.type == AppConstants.songTypeLocal &&
             !song.isLive &&
@@ -689,7 +699,12 @@ class SongloftAudioHandler extends BaseAudioHandler with SeekHandler {
             AudioFormatHelper.needsNativeVideoHls(song.format, song.filePath)) {
           songUrl = UrlHelper.buildVideoHlsUrl(song.id, mediaVideoFlag: true);
         } else {
-          songUrl = UrlHelper.buildVideoUrl(song.url!);
+          // 原生端直出原容器（media=video，保留画面）。桌面直播带 hls=direct，
+          // 避免直播切片经反代往返后过期 404（songloft-org/songloft#249、#480）。
+          songUrl = UrlHelper.buildVideoUrl(
+            song.url!,
+            hlsDirect: isDesktopLive,
+          );
         }
       } else {
         songUrl = UrlHelper.buildSongUrl(
