@@ -126,47 +126,58 @@ class _DraggableScrollbarOverlayState extends State<DraggableScrollbarOverlay> {
     return math.max(_thumbMinHeight, trackHeight * fraction);
   }
 
-  void _onDragStart(DragStartDetails details) {
-    setState(() {
-      _isDragging = true;
-      _dragThumbFraction = _scrollFraction();
-    });
-    _hideTimer?.cancel();
-  }
-
-  void _onDragUpdate(DragUpdateDetails details, double trackHeight) {
+  // 用 Listener 直接吃指针事件，而不是 GestureDetector.onVerticalDragXxx。
+  // 后者会进 Flutter 手势竞技场，一旦外层是 DraggableScrollableSheet + ScrollView
+  // （播放队列底部弹窗就是这种结构），竖直拖动会被 sheet 内部的 Scrollable / sheet 本
+  // 身的 DragGesture 抢走 —— 表现就是 songloft-org/songloft#469 里用户说的「安卓
+  // 和桌面端有滚动条但没法用」。Listener 走 hit-test 直通，不参与竞技场。
+  void _handlePointerDown(PointerDownEvent event, double trackHeight) {
     final thumbH = _thumbHeight(trackHeight);
     final scrollableTrack = trackHeight - thumbH;
     if (scrollableTrack <= 0) return;
+    final currentFraction =
+        _isDragging ? _dragThumbFraction : _scrollFraction();
+    final thumbTop =
+        _trackVerticalPadding +
+        (scrollableTrack * currentFraction).clamp(0.0, scrollableTrack);
+    final y = event.localPosition.dy;
+    // 落点命中拇指才进入拖动；命中拇指之外的轨道视作点按，跳过去后不跟手。
+    if (y >= thumbTop && y <= thumbTop + thumbH) {
+      setState(() {
+        _isDragging = true;
+        _dragThumbFraction = currentFraction;
+      });
+      _hideTimer?.cancel();
+    } else {
+      final tapY = y - _trackVerticalPadding;
+      final fraction = (tapY / scrollableTrack).clamp(0.0, 1.0);
+      setState(() {
+        _isDragging = false;
+        _dragThumbFraction = fraction;
+        _isVisible = true;
+      });
+      _scrollToFraction(fraction, jump: false);
+      _resetHideTimer();
+    }
+  }
 
-    final newFraction = (_dragThumbFraction +
-            details.delta.dy / scrollableTrack)
+  void _handlePointerMove(PointerMoveEvent event, double trackHeight) {
+    if (!_isDragging) return;
+    final thumbH = _thumbHeight(trackHeight);
+    final scrollableTrack = trackHeight - thumbH;
+    if (scrollableTrack <= 0) return;
+    final newFraction = (_dragThumbFraction + event.delta.dy / scrollableTrack)
         .clamp(0.0, 1.0);
+    if (newFraction == _dragThumbFraction) return;
     setState(() => _dragThumbFraction = newFraction);
-
     _scrollToFraction(newFraction, jump: true);
   }
 
-  void _onDragEnd(DragEndDetails details) {
+  void _handlePointerUp() {
+    if (!_isDragging) return;
     final targetFraction = _dragThumbFraction;
     setState(() => _isDragging = false);
     _scrollToFraction(targetFraction, jump: false);
-    _resetHideTimer();
-  }
-
-  void _onTapTrack(TapUpDetails details, double trackHeight) {
-    final thumbH = _thumbHeight(trackHeight);
-    final scrollableTrack = trackHeight - thumbH;
-    if (scrollableTrack <= 0) return;
-
-    final tapY = details.localPosition.dy - _trackVerticalPadding;
-    final fraction = (tapY / scrollableTrack).clamp(0.0, 1.0);
-    setState(() {
-      _isDragging = false;
-      _dragThumbFraction = fraction;
-      _isVisible = true;
-    });
-    _scrollToFraction(fraction, jump: false);
     _resetHideTimer();
   }
 
@@ -266,12 +277,12 @@ class _DraggableScrollbarOverlayState extends State<DraggableScrollbarOverlay> {
     final displayIndex =
         _isDragging ? _indexFromFraction(_dragThumbFraction) : _currentIndex();
 
-    return GestureDetector(
+    return Listener(
       behavior: HitTestBehavior.translucent,
-      onVerticalDragStart: _onDragStart,
-      onVerticalDragUpdate: (d) => _onDragUpdate(d, trackHeight),
-      onVerticalDragEnd: _onDragEnd,
-      onTapUp: (d) => _onTapTrack(d, trackHeight),
+      onPointerDown: (e) => _handlePointerDown(e, trackHeight),
+      onPointerMove: (e) => _handlePointerMove(e, trackHeight),
+      onPointerUp: (_) => _handlePointerUp(),
+      onPointerCancel: (_) => _handlePointerUp(),
       child: AnimatedOpacity(
         opacity: (_isDragging || _isVisible || context.isDesktop) ? 1.0 : 0.0,
         duration: const Duration(milliseconds: 200),

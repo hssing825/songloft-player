@@ -105,6 +105,65 @@ void main() {
     );
   });
 
+  // songloft-org/songloft#469 回归：播放队列在 DraggableScrollableSheet 里，
+  // 竖直拖动会被 sheet/内部 Scrollable 抢进手势竞技场。Listener 走 hit-test 直通，
+  // 即使外层挂了 vertical drag 手势识别器，拇指按下 + 拖动仍能推进 ScrollController。
+  testWidgets('外层竖直 drag 识别器不应抢走拇指拖动', (tester) async {
+    final ctl = ScrollController();
+    addTearDown(ctl.dispose);
+    var outerDragUpdates = 0;
+
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(size: Size(400, 800)),
+        child: MaterialApp(
+          home: Scaffold(
+            body: GestureDetector(
+              onVerticalDragUpdate: (_) => outerDragUpdates++,
+              child: SizedBox(
+                width: 400,
+                height: 600,
+                child: DraggableScrollbarOverlay(
+                  scrollController: ctl,
+                  totalItemCount: 200,
+                  estimatedItemHeight: 50,
+                  enabled: true,
+                  child: ListView.builder(
+                    controller: ctl,
+                    itemCount: 200,
+                    itemExtent: 50,
+                    itemBuilder: (_, i) => Text('row $i'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 触发一次滚动，让滚动条从"未显示"进入 _isVisible 状态，拇指出现。
+    ctl.jumpTo(10);
+    await tester.pump();
+    // 从右侧 hit 区靠上的位置（拇指现在的位置附近）开始向下拖。
+    final start = tester.getTopRight(find.byType(DraggableScrollbarOverlay));
+    final origin = Offset(start.dx - 16, start.dy + 20);
+    await tester.dragFrom(origin, const Offset(0, 300));
+    await tester.pumpAndSettle();
+
+    expect(
+      ctl.offset,
+      greaterThan(1000),
+      reason: '拖动拇指应推动 scroll offset，未被外层手势竞技场抢走',
+    );
+    expect(
+      outerDragUpdates,
+      0,
+      reason: '外层 vertical drag 不应收到事件（Listener 不参与手势竞技场）',
+    );
+  });
+
   testWidgets('阈值翻转时 TextField 的输入连接不应被重建', (tester) async {
     final log = <String>[];
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
